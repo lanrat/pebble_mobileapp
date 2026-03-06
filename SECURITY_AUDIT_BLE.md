@@ -436,6 +436,8 @@ The combination of:
 
 | Vulnerability | Severity | File:Line |
 |--------------|----------|-----------|
+| **Empty/undersized PPoG packets crash app (no bounds check)** | **CRITICAL** | `PPoGPacket.kt:79-101` |
+| **Empty/undersized GATT packets crash app (no bounds check)** | **CRITICAL** | `GATTPacket.kt:52-98` |
 | 5-bit sequence numbers (wrap at 31) — replay-friendly | MEDIUM | `PPoGPacket.kt` |
 | No packet authentication/integrity | HIGH | `PPoG.kt` |
 | Duplicate ACK triggers unlimited retransmission | MEDIUM | `PPoG.kt:224-229` |
@@ -491,9 +493,34 @@ The combination of:
 - Firmware version, hardware platform available after connection
 - Device MAC addresses logged in app logs (extractable on rooted/jailbroken devices)
 
-### 10.4 Debug/Development Interfaces
+### 10.4 Debug/Development Interfaces — CRITICAL
 
-- WebSocket-based development connection exists (`ktor-server-websockets` dependency)
+**Unauthenticated LAN WebSocket Server on port 9000**
+
+When the developer connection feature is active, the app starts an HTTP/WebSocket server bound to `0.0.0.0:9000` — **all network interfaces, no authentication, no TLS**.
+
+**File:** `connection/devconnection/DevConnectionLANServer.kt:48-158`
+
+```kotlin
+host = "0.0.0.0"  // Line 64 — listens on ALL interfaces
+port = PORT        // 9000
+```
+
+**What any LAN client can do (no auth required):**
+- `ClientMessageType.RelayToWatch` — **Send arbitrary Pebble protocol messages to the connected watch** (line 105)
+- `ClientMessageType.InstallBundle` — **Install arbitrary PBW app bundles on the watch** (line 109)
+- Receive all watch-to-phone messages relayed back via WebSocket (line 82)
+- Receive PKJS app log output (line 87)
+
+**Attack scenario**: Any device on the same WiFi network (coffee shop, hotel, office) can connect to `ws://<phone-ip>:9000/` and:
+1. Read all watch communication in real-time
+2. Install malicious watchapps
+3. Send arbitrary protocol commands to the watch
+4. Exfiltrate notification data flowing from phone to watch
+
+**CloudPebble Proxy** (`DevConnectionCloudpebbleProxy.kt`): Connects to external server with token-only authentication (no certificate pinning), enabling remote relay of all watch traffic.
+
+**Additional debug concerns:**
 - `verbosePpogLogging` flag logs all packet contents (`PPoG.kt:56-60`)
 - `GetBytesService` logs message contents at verbose level (`GetBytesService.kt:105`)
 - If debug logging is enabled, app logs contain all BLE traffic
@@ -596,6 +623,8 @@ The combination of:
 | `packets/Music.kt` | Music metadata (plaintext) |
 | `packets/blobdb/Timeline.kt` | Notification content (plaintext) |
 | `calendar/CalendarEvent.kt` | Full calendar data with attendees |
+| `connection/devconnection/DevConnectionLANServer.kt` | **Unauthenticated LAN server on 0.0.0.0:9000** |
+| `connection/devconnection/DevConnectionCloudpebbleProxy.kt` | Remote proxy with token-only auth |
 | `protocolhelpers/PebblePacket.kt` | No validation on deserialization |
 | `services/GetBytesService.kt` | File read from watch, 1-byte transaction ID |
 | `util/Crc32Calculator.kt` | Non-cryptographic integrity only |
